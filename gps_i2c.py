@@ -9,6 +9,7 @@ smbus.write_i2c_block_data(
         I2C_ADDR,
         0xff,
         [
+            0xFF,
             0xB5, 0x62,
             0x01, 0x07,
             0x00, 0x00,
