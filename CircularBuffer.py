@@ -1,25 +1,23 @@
-class CircularBuffer:
+from collections import deque
+from itertools import islice
+
+class CircularBuffer(deque):
     def __init__(self, capacity):
-        self._index = 0
-        self._capacity = capacity
-        self._data = [None] * self._capacity
+        super().__init__(maxlen=capacity)
 
-    def push(self, x):
-        self._data[self._index] = x
-        self._index += 1
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            size = len(self)
 
-    def __getitem__(self, key):
-        if isinstance(key, slice):
-            if key.start >= 0 or key.stop >= 0 or key.start < -self._capacity < -self._capacity:
-                raise IndexError("Index out of bounds")
-
-            return [self._data[self._index + i] for i in range(*key.indices(self._capacity))]
-
-        elif isinstance(key, int):
-            # gets the x-th item from the back
-            if key >= 0 or key < -self._capacity:
-                raise IndexError("Index out of bounds")
-            index = (self._index + key) % self._capacity
-            return self._data[index]
+            start = index.start or 0
+            stop = index.stop or size
+            if start < 0 or stop < 0:
+                start = max(start + size, 0)
+                stop = max(stop + size, 0)
+            return islice(self, start, stop, index.step)
+        elif isinstance(index, int):
+            return super().__getitem__(index)
         else:
-            raise TypeError(f"Incompatible type for key")
+            raise TypeError("Invalid index")
+
+
