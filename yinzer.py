@@ -18,14 +18,49 @@ MULTIPLEXER_ADDR = 0x70
 VID_OUTPUT = 'yinzer.h264'
 I2C_CH = [1 << i for i in range(8)]
 
-G_ACC = 9.81
 TICKRATE = 10.0
 
 ALTI_OUTPUT = 'yinzer_alti.csv'
 IMU_OUTPUT = 'yinzer_imu.csv'
 
-HALF_SEC = int(0.5 * TICKRATE)
-TWO_SEC = int(2 * TICKRATE)
+# Units
+G_ACCELERATION = 9.81
+SECOND = TICKRATE
+METER = 1.0
+FEET = 0.3048
+
+##############################################################
+# PARAMETERS
+##############################################################
+
+# lift-off detection parameters
+# program will begin lift-off code once acceleration exceeds the following
+# threshold, and is sustained for the following duration
+
+LIFTOFF_DETECTION_ACC = 2 * G_ACCELERATION
+LIFTOFF_DETECTION_TIME = int(0.5 * SECOND)
+
+
+# apogee detection parameters
+# program will begin descent code if the altitude now is lower than the
+# altitude _____ seconds ago, where ______ is specified below
+
+APOGEE_DETECTION_TIME = int(2 * SECOND)
+
+
+# main parachute deployment parameters
+# program will deploy main parachute once the altitude falls below the 
+# following threshold
+
+MAIN_CHUTE_THRESHOLD = 500 * METER
+
+
+# landing detection parameters
+# program will end once the altitude _____ seconds ago is the same as the
+# altitude now, where ____ is specified below
+
+LANDING_DETECTION_TIME = int(4 * SECOND)
+
 
 ##############################################################
 # HELPER FUNCTIONS
@@ -47,16 +82,16 @@ def noop():
 # CLASS DECLARATIONS
 ##############################################################
 
-# In a class so that we can write to global variables from inside functions
+# In a class to avoid nonsense with global variables
 class Microcontroller:
     bus = smbus2.SMBus(RPI_BUS_NUM)
     i2c = busio.I2C(board.SCL, board.SDA)
 
     mux_addrs = {
-        'imu': 7,
-        'alti1': 6,
+        'imu': 2,
+        'alti1': 1,
         'alti2': 5,
-        'alti3': 4,
+        'alti3': 6,
         }
 
     camera = picamera.PiCamera()
@@ -107,7 +142,6 @@ class Microcontroller:
 ##############################################################
 
 # PRE-LAUNCH
-LIFTOFF_THRESHOLD = 2 * G_ACC
 
 def prelaunch_setup(m: Microcontroller):
     m.bus.write_byte(MULTIPLEXER_ADDR, I2C_CH[m.mux_addrs['imu']])
@@ -134,9 +168,12 @@ def prelaunch_setup(m: Microcontroller):
 
 def prelaunch_check(m: Microcontroller):
     # check if magnitude of linear acceleration has been consistently greater 
-    # than threshold for the preceding 0.5 sec
+    # than threshold for a specified duration (see parameters)
     m.data.append(m.get_acceleration())
-    return all(x >= LIFTOFF_THRESHOLD for x in m.data[-HALF_SEC:])
+    return all((
+        x >= LIFTOFF_DETECTION_ACC for x in m.data[-LIFTOFF_DETECTION_TIME:]
+        ))
+
 
 # LIFT-OFF
 
@@ -144,6 +181,7 @@ def liftoff_setup(m: Microcontroller):
     m.data = CircularBuffer(int(10 * TICKRATE))
 
 def liftoff_loop(m: Microcontroller, now: datetime):
+    # Log IMU and altimeter data
     timestamp = now.astimezone().isoformat(sep=' ', timespec='milliseconds')
     imu = m.get_imu_all()
     bar = m.get_barometer()
@@ -158,11 +196,52 @@ def liftoff_loop(m: Microcontroller, now: datetime):
 
 
 def liftoff_check(m: Microcontroller):
-    if len(m.data) >= TWO_SEC:
+    # Check if the altitude now is lower than the altitude some time ago
+    # (some time is specified in the parameters)
+    if len(m.data) >= APOGEE_DETECTION_TIME:
         _, bar_now = m.data[-1]
-        _, bar_old = m.data[-TWO_SEC]
-        return bar_old['altitude'] > bar_now['altitude']
+        _, bar_old = m.data[-APOGEE_DETECTION_TIME]
+        if bar_old['altitude'] > bar_now['altitude']:
+            alt_apogee = m.data[-APOGEE_DETECTION_TIME/2['altitude']]
+            print(f"Apogee (1 second ago): {alt_apogee}")
+            return True
     return False
+
+
+# DESCENT PT. 1
+
+def descent_1_setup(m: Microcontroller):
+    # Deploy drogue chutes
+    # TO-DO!!!
+    print("Warning: drogue chute deployment not implemented yet")
+
+def descent_1_loop(m: Microcontroller, now: datetime):
+    # Same as liftoff
+    return liftoff_loop(m, now)
+
+def descent_1_check(m: Microcontroller):
+    # Check that the altitude is lower than a certain threshold
+    return m.data[-1]['altitude'] < MAIN_CHUTE_THRESHOLD
+
+
+# DESCENT PT. 2
+
+def descent_2_setup(m: Microcontroller):
+    # Deploy main chutes
+    # TO-DO!!!
+    print("Warning: main chute deployment not implemented yet")
+
+def descent_2_loop(m: Microcontroller, now: datetime):
+    # Same as liftoff
+    return liftoff_loop(m, now)
+
+def descent_2_check(m: Microcontroller):
+    # Check that the altitude has not changed for a certain time
+    alt_now = m.data[-1]['altitude']
+    alt_old = m.data[-LANDING_DETECTION_TIME]['altitude']
+
+    # Due to floating-point arithmetic we use 1mm as our threshold
+    return abs(alt_now - alt_old) < 0.001
 
 
 ##############################################################
@@ -179,7 +258,10 @@ def liftoff_check(m: Microcontroller):
 stages = [
         ("Pre-Launch", prelaunch_setup, noop, prelaunch_check),
         ("Liftoff", liftoff_setup, liftoff_loop, liftoff_check)
+        ("Descent 1", descent_1_setup, descent_1_loop, descent_1_check),
+        ("Descent 2", descent_2_setup, descent_2_loop, descent_2_check)
         ]
+
 
 def main():
     print("Setting up microcontroller")
