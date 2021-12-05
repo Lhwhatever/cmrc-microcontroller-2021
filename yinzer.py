@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+
 import time
 from datetime import datetime
 import math
@@ -22,12 +24,20 @@ TICKRATE = 10.0
 ALTI_OUTPUT = 'yinzer_alti.csv'
 IMU_OUTPUT = 'yinzer_imu.csv'
 
+HALF_SEC = int(0.5 * TICKRATE)
+TWO_SEC = int(2 * TICKRATE)
+
 ##############################################################
 # HELPER FUNCTIONS
 ##############################################################
 
 def magnitude(v):
     return math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+
+def write_row(csv_f, data):
+    # csv_f is a write-capable file handler to a CSV file
+    # data is an iterable
+    csv_f.write(','.join(map(str, data)) + '\n')
 
 def noop():
     pass
@@ -93,12 +103,10 @@ class Microcontroller:
 
 
 ##############################################################
-# HELPER FUNCTIONS
+# FUNCTIONS FOR EACH STAGE
 ##############################################################
 
 # PRE-LAUNCH
-
-N_RECORDS = int(0.5 * TICKRATE)
 LIFTOFF_THRESHOLD = 2 * G_ACC
 
 def prelaunch_setup(m: Microcontroller):
@@ -125,31 +133,68 @@ def prelaunch_setup(m: Microcontroller):
     m.f_imu = open(IMU_OUTPUT, 'w')
 
 def prelaunch_check(m: Microcontroller):
+    # check if magnitude of linear acceleration has been consistently greater 
+    # than threshold for the preceding 0.5 sec
     m.data.append(m.get_acceleration())
-    return all(x >= LIFTOFF_THRESHOLD for x in m.data[-N_RECORDS:])
+    return all(x >= LIFTOFF_THRESHOLD for x in m.data[-HALF_SEC:])
 
 # LIFT-OFF
-
-N_APOGEE_RECORDS = int(2 * TICKRATE)
 
 def liftoff_setup(m: Microcontroller):
     m.data = CircularBuffer(int(10 * TICKRATE))
 
-def liftoff_loop(m: Microcontroller):
-    timestamp = datetime.now().astimezone()\
-            .isoformat(sep=' ', timespec='milliseconds')
+def liftoff_loop(m: Microcontroller, now: datetime):
+    timestamp = now.astimezone().isoformat(sep=' ', timespec='milliseconds')
     imu = m.get_imu_all()
     bar = m.get_barometer()
     m.data.append((imu, bar))
-    m.f_alti.write(f'{timestamp},{bar["altitude"]},{bar["pressure"]}\n')
-    m.f_imu.write(f'{timestamp},{imu["acc"].x},{imu["acc"].y},{imu["acc"].z},{imu["gyr"].x},{imu["gyr"].y},{imu["gyr"].z},{imu["qua"].w},{imu["qua"].x},{imu["qua"].y},{imu["qua"].z}\n')
+    write_row(m.f_alti, [timestamp, bar['altitude'], bar['pressure']])
+    write_row(m.f_imu, [
+            timestamp,
+            imu['acc'].x, imu['acc'].y, imu['acc'].z,
+            imu['gyr'].x, imu['gyr'].y, imu['gyr'].z,
+            imu['qua'].w, imu['qua'].x, imu['qua'].y, imu['qua'].z,
+            ])
 
 
 def liftoff_check(m: Microcontroller):
-    if len(m.data) >= N_APOGEE_RECORDS:
+    if len(m.data) >= TWO_SEC:
         _, bar_now = m.data[-1]
-        _, bar_old = m.data[-N_APOGEE_RECORDS]
+        _, bar_old = m.data[-TWO_SEC]
         return bar_old['altitude'] > bar_now['altitude']
     return False
 
 
+##############################################################
+# RUNTIME
+##############################################################
+
+# Each stage is represented by a 4-tuple
+# 1. Name of stage (for print/debug purposes)
+# 2. Setup function: To be run ONCE when entering this stage
+# 3. Loop function: To be run every tick during this stage
+# 4. Check function: To check every tick whether we have entered the next 
+#    stage (returns True in that case)
+
+stages = [
+        ("Pre-Launch", prelaunch_setup, noop, prelaunch_check),
+        ("Liftoff", liftoff_setup, liftoff_loop, liftoff_check)
+        ]
+
+def main():
+    print("Setting up microcontroller")
+    m = Microcontroller()
+    SECONDS_PER_TICK = 1 / TICKRATE
+
+    for name, setup, loop, check  in stages:
+        timestamp = datetime.now().astimezone()\
+                .isoformat(sep=' ', timespec='milliseconds')
+        print(f"{timestamp}: Entering stage {name}")
+        setup(m)
+        while not check(m):
+            loop(m, datetime.now())
+            m.camera.wait_recording(SECONDS_PER_TICK)
+
+
+if __name__ == '__main__':
+    main()
