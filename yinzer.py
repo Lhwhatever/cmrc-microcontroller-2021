@@ -169,6 +169,8 @@ def prelaunch_setup(m: Microcontroller):
 def prelaunch_check(m: Microcontroller):
     # check if magnitude of linear acceleration has been consistently greater 
     # than threshold for a specified duration (see parameters)
+
+    # TODO: implement infinite impulse filter
     m.data.append(m.get_acceleration())
     return all((
         x >= LIFTOFF_DETECTION_ACC for x in m.data[-LIFTOFF_DETECTION_TIME:]
@@ -239,6 +241,9 @@ def descent_2_check(m: Microcontroller):
     # Check that the altitude has not changed for a certain time
     alt_now = m.data[-1]['altitude']
     alt_old = m.data[-LANDING_DETECTION_TIME]['altitude']
+
+    # smoothen out fluctuations in altimeter reading
+    alt_old = 0.9 * alt_old + 0.1 * alt_now
 
     # Due to floating-point arithmetic we use 1mm as our threshold
     return abs(alt_now - alt_old) < 0.001
