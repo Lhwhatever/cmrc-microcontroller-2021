@@ -1,6 +1,8 @@
 # Carnegie Mellon Rocket Command, Device Driver for TMC2208 Motor Driver IC
 # Chris Stange, <cjstange@andrew.cmu.edu> (December 26, 2021)
 
+#if the stepper motor vibrates and does not rotate, wiring is incorrect
+
 # THIS DEVICE DRIVER OPERATES THE TMC2208 IN LEGACY MODE
 import RPi.GPIO as GPIO
 import time
@@ -74,12 +76,14 @@ class Stepper:
         if self.enable:
             if (step_direction == 0) or (step_direction == 1):
                 if isinstance(step_count, int) and isinstance(step_frequency, int):
-                    step_period = 1//step_frequency
+                    step_period = 1/step_frequency
                     GPIO.output(self.dir_pin, step_direction)
                     for i in range(step_count):
+                        print(i)
                         GPIO.output(self.step_pin, 1)
-                        time.sleep(step_period)
+                        time.sleep(step_period/2)
                         GPIO.output(self.step_pin, 0)
+                        time.sleep(step_period/2)
                 else:
                     print("Invalid step count or frequency\nPlease ensure inputs are ints")
             else:
