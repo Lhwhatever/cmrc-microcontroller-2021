@@ -1,7 +1,7 @@
 #!/usr/bin/python3
-
 import time
 from datetime import datetime
+from statistics import mean
 import math
 from CircularBuffer import CircularBuffer
 import board
@@ -18,7 +18,7 @@ MULTIPLEXER_ADDR = 0x70
 VID_OUTPUT = 'yinzer.h264'
 I2C_CH = [1 << i for i in range(8)]
 
-TICKRATE = 10.0
+TICKRATE = 20.0
 
 ALTI_OUTPUT = 'yinzer_alti.csv'
 IMU_OUTPUT = 'yinzer_imu.csv'
@@ -33,12 +33,19 @@ FEET = 0.3048
 # PARAMETERS
 ##############################################################
 
+CIRCULAR_BUFFER_SIZE = int(5 * SECOND)
+
+# for IIR
+
+IIR_WT = 0.1
+
 # lift-off detection parameters
 # program will begin lift-off code once acceleration exceeds the following
 # threshold, and is sustained for the following duration
 
 LIFTOFF_DETECTION_ACC = 2 * G_ACCELERATION
 LIFTOFF_DETECTION_TIME = int(0.5 * SECOND)
+COUNT_PCT = 0.95
 
 
 # apogee detection parameters
@@ -103,7 +110,40 @@ class Microcontroller:
     def __init__(self):
         self.f_alti = open(ALTI_OUTPUT, 'w')
         self.f_imu = open(IMU_OUTPUT, 'w')
-        self.data = CircularBuffer(int(10 * TICKRATE))
+        self.data = CircularBuffer(CIRCULAR_BUFFER_SIZE)
+
+    def update(self, now: datetime):
+        timestamp = now.astimezone().isoformat(sep=' ', timespec='milliseconds')
+
+        imu = self.get_imu_all()
+        bar = self.get_barometer()
+
+        # write to file
+        write_row(self.f_alti, [timestamp, bar['alt'], bar['bar']])
+        write_row(self.f_imu, [
+                timestamp,
+                imu['acc'].x, imu['acc'].y, imu['acc'].z,
+                imu['gyr'].x, imu['gyr'].y, imu['gyr'].z,
+                imu['qua'].w, imu['qua'].x, imu['qua'].y, imu['qua'].z,
+                ])
+
+        # store moving average
+        if len(self.data) > 0:
+            old = self.data[-1]
+            imu['acc'].x = old['imu']['acc'].x * (1. - IIR_WT) + imu['acc'].x * IIR_WT
+            imu['acc'].y = old['imu']['acc'].y * (1. - IIR_WT) + imu['acc'].y * IIR_WT
+            imu['acc'].z = old['imu']['acc'].z * (1. - IIR_WT) + imu['acc'].z * IIR_WT
+            imu['gyr'].x = old['imu']['gyr'].x * (1. - IIR_WT) + imu['gyr'].x * IIR_WT
+            imu['gyr'].y = old['imu']['gyr'].y * (1. - IIR_WT) + imu['gyr'].y * IIR_WT
+            imu['gyr'].z = old['imu']['gyr'].z * (1. - IIR_WT) + imu['gyr'].z * IIR_WT
+            imu['qua'].w = old['imu']['qua'].w * (1. - IIR_WT) + imu['qua'].w * IIR_WT
+            imu['qua'].x = old['imu']['qua'].x * (1. - IIR_WT) + imu['qua'].x * IIR_WT
+            imu['qua'].y = old['imu']['qua'].y * (1. - IIR_WT) + imu['qua'].y * IIR_WT
+            imu['qua'].z = old['imu']['qua'].z * (1. - IIR_WT) + imu['qua'].z * IIR_WT
+            bar['alt'] = old['bar']['alt'] * (1. - IIR_WT) + bar['alt'] * IIR_WT
+            bar['bar'] = old['bar']['bar'] * (1. - IIR_WT) + bar['bar'] * IIR_WT
+
+        self.data.append({ 'imu': imu, 'bar': bar })
 
     def __del__(self):
         self.f_imu.close()
@@ -132,8 +172,8 @@ class Microcontroller:
         p3 = self.sensors['alti3'].pressure
         a3 = self.sensors['alti3'].altitude
         return {
-            'pressure': (p1 + p2 + p3) / 3,
-            'altitude': (a1 + a2 + a3) / 3
+            'bar': (p1 + p2 + p3) / 3,
+            'alt': (a1 + a2 + a3) / 3
             }
 
 
@@ -157,23 +197,13 @@ def prelaunch_setup(m: Microcontroller):
     m.f_alti.write('time,altitude,pressure\n')
     m.f_imu.write('time,ax,ay,az,gx,gy,gz,qw,qx,qy,qz\n')
 
-    with open(ALTI_OUTPUT, 'w') as f:
-        f.write
-
-    with open(IMU_OUTPUT, 'w') as f:
-        f.write
-
-    m.f_alti = open(ALTI_OUTPUT, 'w')
-    m.f_imu = open(IMU_OUTPUT, 'w')
+def prelaunch_loop(m: Microcontroller, now: datetime):
+    m.update(now)
 
 def prelaunch_check(m: Microcontroller):
-    # check if magnitude of linear acceleration has been consistently greater 
-    # than threshold for a specified duration (see parameters)
-
-    # TODO: implement infinite impulse filter
-    m.data.append(m.get_acceleration())
     return all((
-        x >= LIFTOFF_DETECTION_ACC for x in m.data[-LIFTOFF_DETECTION_TIME:]
+        magnitude(data['imu']['acc']) > LIFTOFF_DETECTION_ACC 
+        for data in m.data[-LANDING_DETECTION_TIME:]
         ))
 
 
@@ -184,27 +214,16 @@ def liftoff_setup(m: Microcontroller):
 
 def liftoff_loop(m: Microcontroller, now: datetime):
     # Log IMU and altimeter data
-    timestamp = now.astimezone().isoformat(sep=' ', timespec='milliseconds')
-    imu = m.get_imu_all()
-    bar = m.get_barometer()
-    m.data.append((imu, bar))
-    write_row(m.f_alti, [timestamp, bar['altitude'], bar['pressure']])
-    write_row(m.f_imu, [
-            timestamp,
-            imu['acc'].x, imu['acc'].y, imu['acc'].z,
-            imu['gyr'].x, imu['gyr'].y, imu['gyr'].z,
-            imu['qua'].w, imu['qua'].x, imu['qua'].y, imu['qua'].z,
-            ])
-
+    m.update(now)
 
 def liftoff_check(m: Microcontroller):
     # Check if the altitude now is lower than the altitude some time ago
     # (some time is specified in the parameters)
     if len(m.data) >= APOGEE_DETECTION_TIME:
-        _, bar_now = m.data[-1]
-        _, bar_old = m.data[-APOGEE_DETECTION_TIME]
-        if bar_old['altitude'] > bar_now['altitude']:
-            alt_apogee = m.data[-APOGEE_DETECTION_TIME/2['altitude']]
+        _, bar_now = m.data[-1]['bar']
+        _, bar_old = m.data[-APOGEE_DETECTION_TIME]['bar']
+        if bar_old['alt'] > bar_now['alt']:
+            alt_apogee = m.data[-APOGEE_DETECTION_TIME/2['alt']]
             print(f"Apogee (1 second ago): {alt_apogee}")
             return True
     return False
@@ -214,7 +233,7 @@ def liftoff_check(m: Microcontroller):
 
 def descent_1_setup(m: Microcontroller):
     # Deploy drogue chutes
-    # TO-DO!!!
+    # TODO!!!
     print("Warning: drogue chute deployment not implemented yet")
 
 def descent_1_loop(m: Microcontroller, now: datetime):
@@ -223,7 +242,7 @@ def descent_1_loop(m: Microcontroller, now: datetime):
 
 def descent_1_check(m: Microcontroller):
     # Check that the altitude is lower than a certain threshold
-    return m.data[-1]['altitude'] < MAIN_CHUTE_THRESHOLD
+    return m.data[-1]['bar']['alt'] < MAIN_CHUTE_THRESHOLD
 
 
 # DESCENT PT. 2
@@ -239,8 +258,8 @@ def descent_2_loop(m: Microcontroller, now: datetime):
 
 def descent_2_check(m: Microcontroller):
     # Check that the altitude has not changed for a certain time
-    alt_now = m.data[-1]['altitude']
-    alt_old = m.data[-LANDING_DETECTION_TIME]['altitude']
+    alt_now = m.data[-1]['bar']['alt']
+    alt_old = m.data[-LANDING_DETECTION_TIME]['bar']['alt']
 
     # smoothen out fluctuations in altimeter reading
     alt_old = 0.9 * alt_old + 0.1 * alt_now
@@ -262,7 +281,7 @@ def descent_2_check(m: Microcontroller):
 
 stages = [
         ("Pre-Launch", prelaunch_setup, noop, prelaunch_check),
-        ("Liftoff", liftoff_setup, liftoff_loop, liftoff_check)
+        ("Liftoff", liftoff_setup, liftoff_loop, liftoff_check),
         ("Descent 1", descent_1_setup, descent_1_loop, descent_1_check),
         ("Descent 2", descent_2_setup, descent_2_loop, descent_2_check)
         ]
