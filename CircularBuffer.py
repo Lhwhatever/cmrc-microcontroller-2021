@@ -39,18 +39,17 @@ class CircularBuffer:
     def __getitem__(self, index):
         if isinstance(index, slice):
             size = len(self)
-            start = index.start or -size
-            stop = index.stop or 0
+            start = max(index.start or -size, -size)
+            stop = min(index.stop or 0, 0)
 
-            if index.start > 0 or index.stop > 0:
+            if start > 0 or stop > 0:
                 raise IndexError("cannot index circular buffer with positive indices")
-            if index.start < -size or index.stop < -size:
-                raise IndexError("circular buffer index out of range")
 
             i0 = (self._index + start) % self._capacity
             i1 = (self._index + stop) % self._capacity
 
-            if i0 < i1:
+            if start == stop or i0 < i1:
+                print(self._data[i0:i1])
                 return self._data[i0:i1]
             else:
                 return self._data[i0:] + self._data[:i1]
@@ -59,6 +58,6 @@ class CircularBuffer:
             if index >= 0 or index < -len(self):
                 raise IndexError("circular buffer index out of range")
             else:
-                return self._data[index % self._capacity]
+                return self._data[(len(self) + index) % self._capacity]
         else:
             raise TypeError("Invalid index")
