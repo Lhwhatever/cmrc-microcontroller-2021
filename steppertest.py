@@ -6,6 +6,7 @@ import busio
 
 kP = 10
 kI = 0.5
+kD = 0
 
 i2c = busio.I2C(board.SCL, board.SDA)
 sensor = adafruit_bno055.BNO055_I2C(i2c)
@@ -15,6 +16,7 @@ motor.start_motor()
 
 t0 = time.time()
 i = 0
+lastError = 0
 while True:
     # get the gravity vector from the board
     grav = sensor.gravity
@@ -31,9 +33,11 @@ while True:
 
     # now to run the PI controller
     # yummm pie
-    i += error*(t - t0)
+    p = error
+    i = error*(t - t0) + i*.8
+    d = (error - lastError)/(t - t0)
 
-    controlOut = kP*error + kI*i
+    controlOut = kP*p + kI*i + kD*d
 
     # motor time bois!!
     # each step should take 0.05 sec
@@ -42,3 +46,6 @@ while True:
     stepFreq = motorSteps/0.05
 
     motor.move_motor(motorSteps, stepDir, stepFreq)
+
+    t0 = t
+    lastError = error
