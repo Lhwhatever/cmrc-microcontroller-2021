@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 import time
 from datetime import datetime
-from statistics import mean
 import math
 from CircularBuffer import CircularBuffer
 import board
@@ -92,7 +91,7 @@ def update_feature(new, old):
 def update_reading(new, old):
     # same as above, but vectorized (new and old are tuples of the same length
     # representing vectors)
-    return map(lambda x: update_feature(x[0], x[1]), zip(new, old))
+    return tuple(map(lambda x: update_feature(x[0], x[1]), zip(new, old)))
 
 
 ##############################################################
@@ -121,12 +120,15 @@ class Microcontroller:
         self.f_alti = open(ALTI_OUTPUT, 'w')
         self.f_imu = open(IMU_OUTPUT, 'w')
         self.data = CircularBuffer(CIRCULAR_BUFFER_SIZE)
+        self.rtdata = CircularBuffer(CIRCULAR_BUFFER_SIZE)
 
     def update(self, now: datetime):
         timestamp = now.astimezone().isoformat(sep=' ', timespec='milliseconds')
 
         imu = self.get_imu_all()
         bar = self.get_barometer()
+
+        self.rtdata.append({ 'imu': imu, 'bar': bar })
 
         # write to file
         write_row(self.f_alti, [timestamp, bar['alt'], bar['bar']])
@@ -136,7 +138,7 @@ class Microcontroller:
         if len(self.data) > 0:
             old = self.data[-1]
             for key in ['acc', 'gyr', 'qua']:
-                imu[key] = (update_reading(imu[key], old['imu'][key]))
+                imu[key] = update_reading(imu[key], old['imu'][key])
             bar['alt'] = update_feature(bar['alt'], old['bar']['alt'])
             bar['bar'] = update_feature(bar['bar'], old['bar']['bar'])
 
@@ -198,16 +200,17 @@ def prelaunch_loop(m: Microcontroller, now: datetime):
     m.update(now)
 
 def prelaunch_check(m: Microcontroller):
-    return len(m.data) > 10 and all((
-        magnitude(data['imu']['acc']) > LIFTOFF_DETECTION_ACC 
-        for data in m.data[-LANDING_DETECTION_TIME:]
-        ))
+    if len(m.data) <= LIFTOFF_DETECTION_TIME: return False
+
+    hits = sum(map(lambda data: 1 if magnitude(data['imu']['acc']) > LIFTOFF_DETECTION_ACC else 0, m.data[-LIFTOFF_DETECTION_TIME:]))
+
+    return (hits / LIFTOFF_DETECTION_TIME) > COUNT_PCT
 
 
 # LIFT-OFF
 
 def liftoff_setup(m: Microcontroller):
-    m.data = CircularBuffer(int(10 * TICKRATE))
+    pass
 
 def liftoff_loop(m: Microcontroller, now: datetime):
     # Log IMU and altimeter data
@@ -217,11 +220,10 @@ def liftoff_check(m: Microcontroller):
     # Check if the altitude now is lower than the altitude some time ago
     # (some time is specified in the parameters)
     if len(m.data) >= APOGEE_DETECTION_TIME:
-        _, bar_now = m.data[-1]['bar']
-        _, bar_old = m.data[-APOGEE_DETECTION_TIME]['bar']
+        bar_now = m.data[-1]['bar']
+        bar_old = m.data[-APOGEE_DETECTION_TIME]['bar']
         if bar_old['alt'] > bar_now['alt']:
-            alt_apogee = m.data[-APOGEE_DETECTION_TIME/2['alt']]
-            print(f"Apogee (1 second ago): {alt_apogee}")
+            print(f"Apogee (1 second ago): {bar_old['alt']}")
             return True
     return False
 
@@ -257,9 +259,6 @@ def descent_2_check(m: Microcontroller):
     # Check that the altitude has not changed for a certain time
     alt_now = m.data[-1]['bar']['alt']
     alt_old = m.data[-LANDING_DETECTION_TIME]['bar']['alt']
-
-    # smoothen out fluctuations in altimeter reading
-    alt_old = 0.9 * alt_old + 0.1 * alt_now
 
     # Due to floating-point arithmetic we use 1mm as our threshold
     return abs(alt_now - alt_old) < 0.001

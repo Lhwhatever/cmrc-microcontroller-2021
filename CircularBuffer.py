@@ -1,25 +1,3 @@
-from collections import deque
-from itertools import islice
-
-class _CircularBuffer(deque):
-    def __init__(self, capacity):
-        super().__init__(maxlen=capacity)
-
-    def __getitem__(self, index):
-        if isinstance(index, slice):
-            size = len(self)
-
-            start = index.start or 0
-            stop = index.stop or size
-            if start < 0 or stop < 0:
-                start = max(start + size, 0)
-                stop = max(stop + size, 0)
-            return islice(self, start, stop, index.step)
-        elif isinstance(index, int):
-            return super().__getitem__(index)
-        else:
-            raise TypeError("Invalid index")
-
 class CircularBuffer:
 
     def __init__(self, capacity):
@@ -49,7 +27,6 @@ class CircularBuffer:
             i1 = (self._index + stop) % self._capacity
 
             if start == stop or i0 < i1:
-                print(self._data[i0:i1])
                 return self._data[i0:i1]
             else:
                 return self._data[i0:] + self._data[:i1]
