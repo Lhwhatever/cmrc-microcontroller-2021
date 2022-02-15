@@ -74,15 +74,25 @@ LANDING_DETECTION_TIME = int(4 * SECOND)
 ##############################################################
 
 def magnitude(v):
-    return math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+    vx, vy, vz = v
+    return math.sqrt(vx * vx + vy * vy + vz * vz)
 
 def write_row(csv_f, data):
     # csv_f is a write-capable file handler to a CSV file
     # data is an iterable
     csv_f.write(','.join(map(str, data)) + '\n')
 
-def noop():
+def noop(_, __):
     pass
+
+def update_feature(new, old):
+    # calculates the new feature to store
+    return old * (1. - IIR_WT) + new * IIR_WT
+
+def update_reading(new, old):
+    # same as above, but vectorized (new and old are tuples of the same length
+    # representing vectors)
+    return map(lambda x: update_feature(x[0], x[1]), zip(new, old))
 
 
 ##############################################################
@@ -120,28 +130,15 @@ class Microcontroller:
 
         # write to file
         write_row(self.f_alti, [timestamp, bar['alt'], bar['bar']])
-        write_row(self.f_imu, [
-                timestamp,
-                imu['acc'].x, imu['acc'].y, imu['acc'].z,
-                imu['gyr'].x, imu['gyr'].y, imu['gyr'].z,
-                imu['qua'].w, imu['qua'].x, imu['qua'].y, imu['qua'].z,
-                ])
+        write_row(self.f_imu, [timestamp, *imu['acc'], *imu['gyr'], *imu['qua']])
 
         # store moving average
         if len(self.data) > 0:
             old = self.data[-1]
-            imu['acc'].x = old['imu']['acc'].x * (1. - IIR_WT) + imu['acc'].x * IIR_WT
-            imu['acc'].y = old['imu']['acc'].y * (1. - IIR_WT) + imu['acc'].y * IIR_WT
-            imu['acc'].z = old['imu']['acc'].z * (1. - IIR_WT) + imu['acc'].z * IIR_WT
-            imu['gyr'].x = old['imu']['gyr'].x * (1. - IIR_WT) + imu['gyr'].x * IIR_WT
-            imu['gyr'].y = old['imu']['gyr'].y * (1. - IIR_WT) + imu['gyr'].y * IIR_WT
-            imu['gyr'].z = old['imu']['gyr'].z * (1. - IIR_WT) + imu['gyr'].z * IIR_WT
-            imu['qua'].w = old['imu']['qua'].w * (1. - IIR_WT) + imu['qua'].w * IIR_WT
-            imu['qua'].x = old['imu']['qua'].x * (1. - IIR_WT) + imu['qua'].x * IIR_WT
-            imu['qua'].y = old['imu']['qua'].y * (1. - IIR_WT) + imu['qua'].y * IIR_WT
-            imu['qua'].z = old['imu']['qua'].z * (1. - IIR_WT) + imu['qua'].z * IIR_WT
-            bar['alt'] = old['bar']['alt'] * (1. - IIR_WT) + bar['alt'] * IIR_WT
-            bar['bar'] = old['bar']['bar'] * (1. - IIR_WT) + bar['bar'] * IIR_WT
+            for key in ['acc', 'gyr', 'qua']:
+                imu[key] = (update_reading(imu[key], old['imu'][key]))
+            bar['alt'] = update_feature(bar['alt'], old['bar']['alt'])
+            bar['bar'] = update_feature(bar['bar'], old['bar']['bar'])
 
         self.data.append({ 'imu': imu, 'bar': bar })
 
@@ -157,7 +154,7 @@ class Microcontroller:
         self.bus.write_byte(MULTIPLEXER_ADDR, I2C_CH[self.mux_addrs['imu']])
         return {
             'acc': self.sensors['imu'].linear_acceleration,
-            'gyr': self.sensors['imu'].gyroscope,
+            'gyr': self.sensors['imu'].gyro,
             'qua': self.sensors['imu'].quaternion
             }
 
@@ -195,13 +192,13 @@ def prelaunch_setup(m: Microcontroller):
     m.camera.start_recording(VID_OUTPUT)
 
     m.f_alti.write('time,altitude,pressure\n')
-    m.f_imu.write('time,ax,ay,az,gx,gy,gz,qw,qx,qy,qz\n')
+    m.f_imu.write('time,ax,ay,az,gx,gy,gz,qx,qy,qz,qw\n')
 
 def prelaunch_loop(m: Microcontroller, now: datetime):
     m.update(now)
 
 def prelaunch_check(m: Microcontroller):
-    return all((
+    return len(m.data) > 10 and all((
         magnitude(data['imu']['acc']) > LIFTOFF_DETECTION_ACC 
         for data in m.data[-LANDING_DETECTION_TIME:]
         ))
@@ -280,7 +277,7 @@ def descent_2_check(m: Microcontroller):
 #    stage (returns True in that case)
 
 stages = [
-        ("Pre-Launch", prelaunch_setup, noop, prelaunch_check),
+        ("Pre-Launch", prelaunch_setup, prelaunch_loop, prelaunch_check),
         ("Liftoff", liftoff_setup, liftoff_loop, liftoff_check),
         ("Descent 1", descent_1_setup, descent_1_loop, descent_1_check),
         ("Descent 2", descent_2_setup, descent_2_loop, descent_2_check)
