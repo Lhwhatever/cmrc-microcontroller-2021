@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 import time
-from datetime import datetime
+import RPi.GIPO as GPIO
+from datetime import datetime, timedelta
 import math
 from CircularBuffer import CircularBuffer
 import board
@@ -27,6 +28,10 @@ G_ACCELERATION = 9.81
 SECOND = TICKRATE
 METER = 1.0
 FEET = 0.3048
+
+
+DROGUE_PIN = 23
+MAIN_PIN = 24
 
 ##############################################################
 # PARAMETERS
@@ -66,6 +71,18 @@ MAIN_CHUTE_THRESHOLD = 500 * METER
 # altitude now, where ____ is specified below
 
 LANDING_DETECTION_TIME = int(4 * SECOND)
+
+
+# timers for backup!!!
+# timedelta required to begin each stage IF sensors break
+# start counting from liftoff
+
+TIME_DESCENT_1 = timedelta(seconds=5)
+TIME_DESCENT_2 = timedelta(seconds=10)
+
+# seconds to disable output to igniter pin
+
+CLEAN_IGNITERS_TIME = timedelta(seconds=5)
 
 
 ##############################################################
@@ -121,6 +138,13 @@ class Microcontroller:
         self.f_imu = open(IMU_OUTPUT, 'w')
         self.data = CircularBuffer(CIRCULAR_BUFFER_SIZE)
         self.rtdata = CircularBuffer(CIRCULAR_BUFFER_SIZE)
+        self.liftoff = None
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(DROGUE_PIN, GPIO.OUT)
+        GPIO.setup(MAIN_PIN, GPIO.OUT)
+
+        self.drogue_fired = None
+        self.main_fired = None
 
     def update(self, now: datetime):
         timestamp = now.astimezone().isoformat(sep=' ', timespec='milliseconds')
@@ -143,6 +167,7 @@ class Microcontroller:
             bar['bar'] = update_feature(bar['bar'], old['bar']['bar'])
 
         self.data.append({ 'imu': imu, 'bar': bar })
+        print({ 'imu': imu, 'bar': bar })
 
     def __del__(self):
         self.f_imu.close()
@@ -174,6 +199,18 @@ class Microcontroller:
             'bar': (p1 + p2 + p3) / 3,
             'alt': (a1 + a2 + a3) / 3
             }
+
+    # disable if pins have been fired for some time
+    def clean(self, time):
+        if self.drogue_fired is not None:
+            if time - self.drogue_fired > CLEAN_IGNITERS_TIME:
+                GPIO.output(DROGUE_PIN, False)
+                self.drogue_fired = None
+
+        if self.main_fired is not None:
+            if time - self.main_fired > CLEAN_IGNITERS_TIME:
+                GPIO.output(MAIN_PIN, False)
+                self.main_fired = None
 
 
 ##############################################################
@@ -210,7 +247,7 @@ def prelaunch_check(m: Microcontroller):
 # LIFT-OFF
 
 def liftoff_setup(m: Microcontroller):
-    pass
+    m.liftoff = datetime.now()
 
 def liftoff_loop(m: Microcontroller, now: datetime):
     # Log IMU and altimeter data
@@ -233,11 +270,13 @@ def liftoff_check(m: Microcontroller):
 def descent_1_setup(m: Microcontroller):
     # Deploy drogue chutes
     # TODO!!!
-    print("Warning: drogue chute deployment not implemented yet")
+    GPIO.output(DROGUE_PIN, True)
+    print("Warning: drogue chute deployment not tested yet")
 
 def descent_1_loop(m: Microcontroller, now: datetime):
-    # Same as liftoff
-    return liftoff_loop(m, now)
+    result = liftoff_loop(m, now)
+    m.clean(now)
+    return result
 
 def descent_1_check(m: Microcontroller):
     # Check that the altitude is lower than a certain threshold
@@ -248,12 +287,13 @@ def descent_1_check(m: Microcontroller):
 
 def descent_2_setup(m: Microcontroller):
     # Deploy main chutes
-    # TO-DO!!!
+    # TODO!!!
+    GPIO.output(MAIN_PIN, True)
     print("Warning: main chute deployment not implemented yet")
 
 def descent_2_loop(m: Microcontroller, now: datetime):
-    # Same as liftoff
-    return liftoff_loop(m, now)
+    # Same as descent_1_loop
+    return descent_1_loop(m, now)
 
 def descent_2_check(m: Microcontroller):
     # Check that the altitude has not changed for a certain time
@@ -268,19 +308,29 @@ def descent_2_check(m: Microcontroller):
 # RUNTIME
 ##############################################################
 
-# Each stage is represented by a 4-tuple
+# Each stage is represented by a 5-tuple
 # 1. Name of stage (for print/debug purposes)
 # 2. Setup function: To be run ONCE when entering this stage
 # 3. Loop function: To be run every tick during this stage
 # 4. Check function: To check every tick whether we have entered the next 
+# 5. Minimum timedelta from liftoff needed
 #    stage (returns True in that case)
 
 stages = [
-        ("Pre-Launch", prelaunch_setup, prelaunch_loop, prelaunch_check),
-        ("Liftoff", liftoff_setup, liftoff_loop, liftoff_check),
-        ("Descent 1", descent_1_setup, descent_1_loop, descent_1_check),
+        ("Pre-Launch", prelaunch_setup, prelaunch_loop, prelaunch_check, None),
+        ("Liftoff", liftoff_setup, liftoff_loop, liftoff_check, TIME_DESCENT_1),
+        ("Descent 1", descent_1_setup, descent_1_loop, descent_1_check, TIME_DESCENT_2),
         ("Descent 2", descent_2_setup, descent_2_loop, descent_2_check)
         ]
+
+
+def compare_time(m, delta):
+    if m.liftoff is None or delta is None:
+        return False
+    if datetime.now() - m.liftoff >= delta:
+        print("Timer elapsed, automatically moving to next stage!")
+        return True
+    return False
 
 
 def main():
@@ -288,12 +338,12 @@ def main():
     m = Microcontroller()
     SECONDS_PER_TICK = 1 / TICKRATE
 
-    for name, setup, loop, check  in stages:
+    for name, setup, loop, check, delta in stages:
         timestamp = datetime.now().astimezone()\
                 .isoformat(sep=' ', timespec='milliseconds')
         print(f"{timestamp}: Entering stage {name}")
         setup(m)
-        while not check(m):
+        while not (check(m) or compare_time(m, delta)):
             loop(m, datetime.now())
             m.camera.wait_recording(SECONDS_PER_TICK)
 
