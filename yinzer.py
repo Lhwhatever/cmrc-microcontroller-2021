@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 import time
-import RPi.GIPO as GPIO
+import pigpio
 from datetime import datetime, timedelta
 import math
 from CircularBuffer import CircularBuffer
@@ -139,9 +139,9 @@ class Microcontroller:
         self.data = CircularBuffer(CIRCULAR_BUFFER_SIZE)
         self.rtdata = CircularBuffer(CIRCULAR_BUFFER_SIZE)
         self.liftoff = None
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(DROGUE_PIN, GPIO.OUT)
-        GPIO.setup(MAIN_PIN, GPIO.OUT)
+        self.pi = pigpio.pi()
+        self.pi.set_mode(DROGUE_PIN, pigpio.OUTPUT)
+        self.pi.set_mode(MAIN_PIN, pigpio.OUTPUT)
 
         self.drogue_fired = None
         self.main_fired = None
@@ -204,12 +204,12 @@ class Microcontroller:
     def clean(self, time):
         if self.drogue_fired is not None:
             if time - self.drogue_fired > CLEAN_IGNITERS_TIME:
-                GPIO.output(DROGUE_PIN, False)
+                self.pi.write(DROGUE_PIN, False)
                 self.drogue_fired = None
 
         if self.main_fired is not None:
             if time - self.main_fired > CLEAN_IGNITERS_TIME:
-                GPIO.output(MAIN_PIN, False)
+                self.pi.write(MAIN_PIN, False)
                 self.main_fired = None
 
 
@@ -270,7 +270,7 @@ def liftoff_check(m: Microcontroller):
 def descent_1_setup(m: Microcontroller):
     # Deploy drogue chutes
     # TODO!!!
-    GPIO.output(DROGUE_PIN, True)
+    m.pi.write(DROGUE_PIN, True)
     print("Warning: drogue chute deployment not tested yet")
 
 def descent_1_loop(m: Microcontroller, now: datetime):
@@ -288,7 +288,7 @@ def descent_1_check(m: Microcontroller):
 def descent_2_setup(m: Microcontroller):
     # Deploy main chutes
     # TODO!!!
-    GPIO.output(MAIN_PIN, True)
+    m.pi.write(MAIN_PIN, True)
     print("Warning: main chute deployment not implemented yet")
 
 def descent_2_loop(m: Microcontroller, now: datetime):
