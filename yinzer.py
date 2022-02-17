@@ -320,7 +320,7 @@ stages = [
         ("Pre-Launch", prelaunch_setup, prelaunch_loop, prelaunch_check, None),
         ("Liftoff", liftoff_setup, liftoff_loop, liftoff_check, TIME_DESCENT_1),
         ("Descent 1", descent_1_setup, descent_1_loop, descent_1_check, TIME_DESCENT_2),
-        ("Descent 2", descent_2_setup, descent_2_loop, descent_2_check)
+        ("Descent 2", descent_2_setup, descent_2_loop, descent_2_check, None)
         ]
 
 
