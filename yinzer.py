@@ -9,7 +9,6 @@ import busio
 import smbus2
 import adafruit_bno055
 import altimeter
-import picamera
 from collections import deque
 
 RPI_BUS_NUM = 1
@@ -127,8 +126,6 @@ class Microcontroller:
         'alti3': 6,
         }
 
-    camera = picamera.PiCamera()
-
     sensors = {}
 
     data: CircularBuffer
@@ -226,9 +223,9 @@ def prelaunch_setup(m: Microcontroller):
         m.bus.write_byte(MULTIPLEXER_ADDR, I2C_CH[m.mux_addrs[x]])
         m.sensors[x] = altimeter.Altimeter(m.i2c)
 
-    m.camera.resolution = (1280, 720)
-    m.camera.framerate = 60
-    m.camera.start_recording(VID_OUTPUT)
+    # m.camera.resolution = (1280, 720)
+    # m.camera.framerate = 60
+    # m.camera.start_recording(VID_OUTPUT)
 
     m.f_alti.write('time,altitude,pressure\n')
     m.f_imu.write('time,ax,ay,az,gx,gy,gz,qx,qy,qz,qw\n')
@@ -345,7 +342,8 @@ def main():
         setup(m)
         while not (check(m) or compare_time(m, delta)):
             loop(m, datetime.now())
-            m.camera.wait_recording(SECONDS_PER_TICK)
+            time.sleep(SECONDS_PER_TICK)
+            # m.camera.wait_recording(SECONDS_PER_TICK)
 
 
 if __name__ == '__main__':
