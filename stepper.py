@@ -8,7 +8,7 @@ import RPi.GPIO as GPIO
 import time
 
 # Pin numbers are specified by their pin header number, not the GPIO number
-GPIO.setmode(GPIO.BOARD)
+GPIO.setmode(GPIO.BCM)
 
 class Stepper:
     def __init__(self, en_pin, res1_pin, res2_pin, dir_pin, step_pin):

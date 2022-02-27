@@ -11,9 +11,6 @@ import os
 
 TICKRATE = 20.0
 
-ALTI_OUTPUT = '/home/pi/Desktop/cmrc-microcontroller-2021/yinzer_alti.csv'
-IMU_OUTPUT = '/home/pi/Desktop/cmrc-microcontroller-2021/yinzer_imu.csv'
-
 # Units
 G_ACCELERATION = 9.81
 SECOND = TICKRATE
@@ -46,7 +43,7 @@ APOGEE_DETECTION_TIME = int(2 * SECOND)
 # program will deploy main parachute once the altitude falls below the 
 # following threshold
 
-MAIN_CHUTE_THRESHOLD = 500 * METER
+MAIN_CHUTE_THRESHOLD = 500 * FEET
 
 
 # landing detection parameters
@@ -92,8 +89,24 @@ class Microcontroller:
     sensors = {}
     
     def __init__(self):
-        self.f_alti = open(ALTI_OUTPUT, 'w')
-        self.f_imu = open(IMU_OUTPUT, 'w')
+        name_counter = 0
+        self.alti_output = '/home/pi/Desktop/andrews-gambit-flight-data/'
+        self.imu_output = '/home/pi/Desktop/andrews-gambit-flight-data/'
+        while True:
+            alti_output_temp = self.alti_output + str(name_counter) + '-yinzer_alti.csv'
+            imu_output_temp = self.imu_output + str(name_counter) + '-yinzer_imu.csv'
+            try:
+                open(alti_output_temp, 'x')
+                open(imu_output_temp, 'x')
+                
+                self.alti_output = alti_output_temp
+                self.imu_output = imu_output_temp
+                break
+            except FileExistsError:
+                name_counter += 1
+        
+        self.f_alti = open(self.alti_output, 'w')
+        self.f_imu = open(self.imu_output, 'w')
         self.liftoff = None
         self.alt_offset = 0
         
@@ -370,8 +383,8 @@ def main():
             if m.save_counter%100 == 0:
                 m.f_imu.close()
                 m.f_alti.close()
-                m.f_imu = open(IMU_OUTPUT, 'a')
-                m.f_alti = open(ALTI_OUTPUT, 'a')
+                m.f_imu = open(m.imu_output, 'a')
+                m.f_alti = open(m.alti_output, 'a')
             m.save_counter += 1
             # assert(False)
             #print(time.time()-t0)
@@ -387,5 +400,6 @@ if __name__ == '__main__':
         GPIO.output(BUZZ_PIN, GPIO.HIGH)
         time.sleep(2)
         GPIO.output(BUZZ_PIN, GPIO.LOW)
+        GPIO.cleanup()
         raise(e)
         #os.system("sudo shutdown -h now")
