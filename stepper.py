@@ -42,8 +42,8 @@ class Stepper:
         GPIO.output(self.step_pin, 0)
 
         # Resolution dictionary
-        self.dict = {'1/2': (0,1),
-                        '1/4': (1,0),
+        self.dict = {'1/2': (1,0),
+                        '1/4': (0,1),
                         '1/8': (0,0),
                         '1/16': (1,1)}
         
@@ -79,7 +79,7 @@ class Stepper:
                     step_period = 1/step_frequency
                     GPIO.output(self.dir_pin, step_direction)
                     for i in range(step_count):
-                        print(i)
+                        #print(i)
                         GPIO.output(self.step_pin, 1)
                         time.sleep(step_period/2)
                         GPIO.output(self.step_pin, 0)
