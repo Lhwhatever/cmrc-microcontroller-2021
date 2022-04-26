@@ -63,6 +63,7 @@ def main(gps_data):
     while True:
         try:
             read = mygnss.uart_read()
+            print(read)
             msg = pynmea2.parse(read.decode())
             print(msg.latitude)
             print(msg.longitude)
