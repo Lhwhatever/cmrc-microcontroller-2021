@@ -1,4 +1,5 @@
 import serial
+import pynmea2
 import time
 import RPi.GPIO as GPIO
 
@@ -54,18 +55,19 @@ class Gnss:
     def uart_read(self):
         return self.ser.readline()
 
-mygnss = Gnss(18, 23, 24, 25)
-mygnss.wakeup()
-while True:
-    try:
-        read = mygnss.uart_read()
-        print(read.decode(), end="")
-    except:
-        mygnss = Gnss(18, 23, 24, 25)
-        #mygnss.wakeup()
-        #GPIO.cleanup()
-        print("failed")
-        
-GPIO.cleanup()
-print("")
+def main(gps_data):
+    mygnss = Gnss(18, 23, 24, 25)
+    mygnss.wakeup()
 
+    while True:
+        try:
+            read = mygnss.uart_read()
+            msg = pynmea2.parse(read.decode())
+            print(msg.latitude)
+            print(msg.longitude)
+            with gps_data.get_lock():
+                pass
+        except KeyboardInterrupt:
+            break
+        except Exception:
+            mygnss = Gnss(18, 23, 24, 25)
