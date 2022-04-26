@@ -2,6 +2,7 @@ import serial
 import pynmea2
 import time
 import RPi.GPIO as GPIO
+import multiprocessing as mp
 
 class Gnss:
     def __init__(self, sel:int, rst:int, exi:int, pls:int):
@@ -71,3 +72,8 @@ def main(gps_data):
             break
         except Exception:
             mygnss = Gnss(18, 23, 24, 25)
+
+if __name__ == '__main__':
+    print('h')
+    gps_data = mp.Array('d', [0.0] * 4)
+    main(gps_data)
